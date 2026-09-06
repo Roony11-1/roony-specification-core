@@ -6,11 +6,11 @@
 
     <groupId>io.github.roony11-1</groupId>
     <artifactId>roony-specification-core</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>roony-specification-core</name>
-    <description>Filtros dinámicos para APIs Java basados en Criteria API (independiente de framework)</description>
+    <description>Filtros dinámicos para APIs Java - core agnóstico de persistencia</description>
     <url>https://github.com/Roony11-1/roony-specification-core</url>
 
     <properties>
@@ -20,13 +20,6 @@
     </properties>
 
     <dependencies>
-        <dependency>
-            <groupId>jakarta.persistence</groupId>
-            <artifactId>jakarta.persistence-api</artifactId>
-            <version>3.1.0</version>
-            <scope>provided</scope>
-        </dependency>
-
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
