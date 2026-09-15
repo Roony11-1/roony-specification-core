@@ -1,11 +1,67 @@
 # roony-specification-core
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Java](https://img.shields.io/badge/Java-21%2B-blue)
+Motor y modelo base para la construcción de filtros dinámicos.
 
-Filtros dinámicos para consultas **JPA / JPA Criteria**, sin dependencias de Spring. Construye predicados a partir de pares `campo → valor` (vía query params), de forma segura y tipada, listo para usar con Spring Data JPA, Quarkus/Hibernate o JPA puro.
+`roony-specification-core` define una representación independiente de framework para expresar condiciones de filtrado y operadores, permitiendo que estas condiciones sean posteriormente adaptadas a distintas tecnologías de persistencia.
+
+```text
+FilterConditions
+       │
+       ├───────────────┐
+       ▼               ▼
+    JPA / Criteria   Otros adaptadores
+       │
+       ▼
+   Predicate
+```
+
+El módulo no depende de Spring y está diseñado para servir como núcleo de la familia `roony-specification`.
+
+## ¿Qué problema resuelve?
+
+Los filtros dinámicos suelen terminar acoplados directamente a la tecnología utilizada para consultar los datos.
+
+Por ejemplo, una API puede recibir:
+
+```text
+GET /productos?estado=ACTIVO&precio=gte|100
+```
+
+pero la interpretación de esos parámetros no debería depender directamente de Spring Data, JPA o de una implementación concreta de persistencia.
+
+Este módulo separa ambas responsabilidades:
+
+```text
+Entrada externa
+      │
+      ▼
+Condiciones de filtrado
+      │
+      ▼
+roony-specification-core
+      │
+      ▼
+Adaptador de persistencia
+```
+
+De esta forma, el core define **qué significa un filtro**, mientras que los módulos de integración determinan **cómo ejecutarlo**.
+
+## Características
+
+* Modelo independiente para condiciones de filtrado.
+* Operadores de comparación y filtrado.
+* Soporte para filtros de uno o múltiples valores.
+* Soporte para propiedades anidadas.
+* Aliases para nombres de propiedades.
+* Conversión de valores a tipos Java.
+* Validación de sintaxis y valores.
+* Excepciones específicas mediante `FilterException`.
+* Sin dependencia de Spring.
+* Diseñado para ser utilizado por diferentes adaptadores de persistencia.
 
 ## Instalación
+
+### Maven
 
 ```xml
 <dependency>
@@ -15,110 +71,299 @@ Filtros dinámicos para consultas **JPA / JPA Criteria**, sin dependencias de Sp
 </dependency>
 ```
 
-> `jakarta.persistence-api` se declara con scope `provided`: tu proyecto ya trae el proveedor JPA.
+La versión de JPA utilizada por la aplicación debe ser proporcionada por el consumidor cuando corresponda.
 
 ## Uso rápido
 
-En un repositorio Spring Data JPA:
-
-```java
-@Service
-public class ProductoService {
-
-    private final ProductoRepository repository;
-
-    public List<Producto> buscar(Map<String, String> filtros) {
-        return repository.findAll((root, query, cb) -> new FilterPredicateBuilder()
-                .withConditions(filtros)          // mapea el query string a condiciones
-                .withAliases(Map.of("cat", "categoria"))
-                .toPredicate(root, query, cb));
-    }
-}
-```
-
-Así, una petición como `GET /productos?estado=ACTIVO&precio=gte|100&cat=ELECTRONICA&page=0&size=20` se traduce en predicados. Los parámetros `page`, `size` y `sort` se ignoran automáticamente (para que no den error en la Criteria).
-
-## Sintaxis de filtros
-
-### Igualdad simple
-
-`?nombre=Juan` → `nombre EQ Juan`
-
-### Operadores explícitos (`operador|valor`)
-
-Puedes usar el operador en mayúsculas o minúsculas:
-
-| Query param | Predicado |
-|---|---|
-| `?precio=gt\|1000` | `precio GT 1000` |
-| `?estado=neq\|INACTIVO` | `estado NE INACTIVO` |
-| `?email=like\|@gmail.com` | `email LIKE '%@gmail.com%'` |
-| `?nombre=ilike\|juan` | `nombre UPPER LIKE '%JUAN%'` (case-insensitive) |
-| `?precio=gte\|18` | `precio GTE 18` |
-| `?precio=lt\|30` | `precio LT 30` |
-| `?precio=lte\|30` | `precio LTE 30` |
-| `?estado=is_null` / `is_not_null` | `estado IS NULL` / `IS NOT NULL` |
-
-> Si un valor contiene `|` que no forma parte de la sintaxis, debe url-encodearse como `%7C`.
-
-### Operadores multi-valor
-
-```text
-?estado=in:ACTIVO,INACTIVO       → estado IN (ACTIVO, INACTIVO)
-?precio=between:100,1000          → precio BETWEEN 100 AND 1000
-```
-
-### Lista de operadores (`FilterOperator`)
-
-`EQ`, `NE`, `LIKE`, `ILIKE`, `GT`, `GTE`, `LT`, `LTE`, `IN`, `BETWEEN`, `IS_NULL`, `IS_NOT_NULL`.
-
-- `isUnary()`: `IS_NULL`, `IS_NOT_NULL` (no requieren valor)
-- `isBinary()`: `BETWEEN` (requiere dos valores)
-
-## Conversión automática de tipos
-
-`ValueConverter` convierte el string del query al tipo Java de la columna (`path.getJavaType()`):
-
-- Primitivos y wrappers: `Integer`, `Long`, `Double`, `Float`, `Boolean`
-- Enums (por nombre)
-- `LocalDate`, `LocalDateTime`, `Instant`, `OffsetDateTime` (ISO-8601)
-- `UUID`
-- `String`
-
-Si el formato es inválido lanza `FilterException` con un mensaje legible.
-
-## Campos anidados
-
-Soporta rutas con puntos para relaciones: `?direccion.ciudad=Monterrey` → `direccion.ciudad EQ 'Monterrey'`.
-
-## Aliases
-
-Con `withAliases(Map)` puedes exponer nombres cortos o protegidos en la API y mapearlos al campo real de la entidad:
-
-```java
-.withAliases(Map.of(
-    "cat", "categoria",
-    "edad", "cliente.edad"
-))
-```
-
-## Construcción manual
-
-También puedes escribir condiciones directamente:
+Una condición puede representarse a partir de un campo y su valor:
 
 ```java
 List<FilterCondition> conditions = new ArrayList<>();
-FilterParser.parseAndAdd("precio", "gte|18", conditions);
 
-Specification<Producto> spec = (root, query, cb) -> new FilterPredicateBuilder()
-        .withConditions(conditions)
-        .toPredicate(root, query, cb);
+FilterParser.parseAndAdd(
+        "precio",
+        "gte|100",
+        conditions
+);
 ```
+
+Las condiciones pueden posteriormente ser entregadas a un adaptador de persistencia:
+
+```text
+FilterConditions
+      │
+      ▼
+Adaptador
+      │
+      ▼
+Consulta
+```
+
+El core no necesita conocer si la consulta será ejecutada mediante Spring Data JPA, Jakarta Criteria, Hibernate u otra implementación.
+
+## Sintaxis de filtros
+
+Los filtros pueden representar una igualdad simple:
+
+```text
+nombre=Juan
+```
+
+que conceptualmente corresponde a:
+
+```text
+nombre EQ Juan
+```
+
+También pueden utilizar operadores explícitos:
+
+```text
+precio=gt|1000
+estado=neq|INACTIVO
+email=like|@gmail.com
+nombre=ilike|juan
+precio=gte|18
+precio=lt|30
+precio=lte|30
+```
+
+Los operadores pueden escribirse en mayúsculas o minúsculas.
+
+### Operadores multi-valor
+
+Algunos operadores trabajan con múltiples valores:
+
+```text
+estado=in:ACTIVO,INACTIVO
+precio=between:100,1000
+```
+
+que representan:
+
+```text
+estado IN (ACTIVO, INACTIVO)
+precio BETWEEN 100 AND 1000
+```
+
+Si un valor contiene `|` como parte de su contenido y no como operador, debe utilizarse su representación URL encoded:
+
+```text
+%7C
+```
+
+## Operadores
+
+Los operadores disponibles se representan mediante `FilterOperator`:
+
+| Operador      | Descripción                                     |
+| ------------- | ----------------------------------------------- |
+| `EQ`          | Igualdad                                        |
+| `NE`          | Diferente                                       |
+| `LIKE`        | Coincidencia de texto                           |
+| `ILIKE`       | Coincidencia de texto sin distinguir mayúsculas |
+| `GT`          | Mayor que                                       |
+| `GTE`         | Mayor o igual                                   |
+| `LT`          | Menor que                                       |
+| `LTE`         | Menor o igual                                   |
+| `IN`          | Pertenencia a una colección                     |
+| `BETWEEN`     | Rango de valores                                |
+| `IS_NULL`     | Valor nulo                                      |
+| `IS_NOT_NULL` | Valor no nulo                                   |
+
+Los operadores también definen las características de los valores que requieren.
+
+Por ejemplo:
+
+```text
+IS_NULL
+IS_NOT_NULL
+```
+
+son operadores unarios y no requieren un valor.
+
+Mientras que:
+
+```text
+BETWEEN
+```
+
+requiere dos valores.
+
+## Conversión de tipos
+
+Los valores provenientes de entradas externas suelen representarse inicialmente como `String`.
+
+`ValueConverter` permite convertir estos valores al tipo Java correspondiente.
+
+Entre los tipos soportados se encuentran:
+
+* `Integer`
+* `Long`
+* `Double`
+* `Float`
+* `Boolean`
+* `Enum`
+* `LocalDate`
+* `LocalDateTime`
+* `Instant`
+* `OffsetDateTime`
+* `UUID`
+* `String`
+
+Las fechas y horas utilizan formatos compatibles con ISO-8601.
+
+Cuando un valor no puede convertirse correctamente, se genera un `FilterException` con información sobre el error.
+
+## Campos anidados
+
+Las condiciones pueden utilizar rutas de propiedades mediante notación con puntos.
+
+Por ejemplo:
+
+```text
+direccion.ciudad=Monterrey
+```
+
+representa conceptualmente:
+
+```text
+direccion.ciudad EQ "Monterrey"
+```
+
+Esto permite expresar filtros sobre propiedades pertenecientes a estructuras o relaciones anidadas.
+
+## Aliases
+
+Los aliases permiten exponer nombres diferentes a los nombres reales de las propiedades.
+
+Por ejemplo:
+
+```java
+.withAliases(Map.of(
+        "cat", "categoria",
+        "edad", "cliente.edad"
+))
+```
+
+permite utilizar:
+
+```text
+cat=ELECTRONICA
+edad=gte|18
+```
+
+mientras que internamente las condiciones hacen referencia a:
+
+```text
+categoria
+cliente.edad
+```
+
+Esto permite desacoplar el contrato externo de la estructura interna de las entidades.
+
+## Construcción manual
+
+Las condiciones también pueden construirse directamente sin utilizar una cadena de query parameters:
+
+```java
+List<FilterCondition> conditions = new ArrayList<>();
+
+FilterParser.parseAndAdd(
+        "precio",
+        "gte|18",
+        conditions
+);
+```
+
+Posteriormente estas condiciones pueden ser utilizadas por el adaptador correspondiente.
+
+## Arquitectura
+
+`roony-specification-core` es la capa central de la familia `roony-specification`.
+
+```text
+                    roony-specification-core
+                              │
+                    FilterConditions
+                              │
+              ┌───────────────┴───────────────┐
+              ▼                               ▼
+   roony-specification-jpa          Otros adaptadores
+              │
+              ▼
+       Jakarta Criteria API
+              │
+              ▼
+       JPA / Hibernate
+```
+
+En una aplicación Spring Data JPA:
+
+```text
+HTTP Query Parameters
+        │
+        ▼
+query-params
+        │
+        ▼
+specification-core
+        │
+        ▼
+specification-jpa
+        │
+        ▼
+specification-spring
+        │
+        ▼
+Spring Data JPA
+```
+
+Cada módulo mantiene una responsabilidad específica:
+
+* `roony-specification-core` — modelo y semántica de los filtros.
+* `roony-specification-query-params` — interpretación de parámetros de consulta.
+* `roony-specification-jpa` — adaptación a Jakarta Criteria API.
+* `roony-specification-spring` — integración con Spring Data JPA.
 
 ## Errores
 
-`FilterException` (un `RuntimeException`) se lanza ante sintaxis inválida, valores mal tipados o rutas de campo inexistentes. El puente `roony-specification-error-spring` la convierte en una respuesta de error `400` con formato `roony-error`.
+Los errores relacionados con filtros se representan mediante `FilterException`.
 
----
+Se utiliza ante situaciones como:
 
-MIT License · [Roony11-1](https://github.com/roony11-1)
+* Sintaxis inválida.
+* Operadores inexistentes.
+* Valores con tipos incompatibles.
+* Cantidad incorrecta de valores.
+* Rutas de propiedades inválidas.
+
+La excepción pertenece al core y no depende de una tecnología web concreta.
+
+Las integraciones superiores pueden adaptar estos errores al mecanismo de manejo de errores de su framework.
+
+## Dependencias
+
+El objetivo del core es mantener una superficie de dependencias mínima y no acoplar el modelo de filtros a un framework específico.
+
+Las implementaciones de persistencia y las integraciones con frameworks se encuentran en módulos separados.
+
+## Proyecto relacionado
+
+* `roony-specification-query-params` — Conversión de query parameters a condiciones de filtrado.
+* `roony-specification-jpa` — Adaptación de las condiciones a Jakarta Criteria API.
+* `roony-specification-spring` — Integración con Spring Data JPA.
+* `roony-error` — Manejo y representación de errores en integraciones compatibles.
+
+## Versionado
+
+El proyecto utiliza versionado semántico mediante versiones publicadas en Maven Central.
+
+La versión actual es:
+
+```text
+1.1.0
+```
+
+## Licencia
+
+Este proyecto está disponible bajo la licencia MIT.
